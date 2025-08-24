@@ -1,0 +1,15 @@
+[project]
+name = "fastapi-pagination-utils"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.116.1",
+    "sqlmodel>=0.0.24",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17.1",
+]
