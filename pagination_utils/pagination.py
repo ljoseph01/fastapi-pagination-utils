@@ -6,7 +6,7 @@ from sqlmodel import SQLModel, func, select
 from sqlmodel.sql.expression import SelectOfScalar
 
 import logging
-from schemas.pagination import PaginatedResults
+from .schemas import PaginatedResults
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,20 @@ def get_pagination_details(
     has_prev = page > 1
     offset = (page - 1) * page_size
 
+    if num_pages == 0 and page == 1:
+        return PaginationDetails(
+            num_pages=0,
+            has_next=False,
+            has_prev=False,
+            offset=0
+        )
+
+    if page <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Page must be greater than 0, got {page}."
+        )
+
     if page > num_pages:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -68,7 +82,7 @@ async def paginate_query[Model: SQLModel, PublicModel: SQLModel](
         ordered_statement = base_statement.order_by(order_by)
 
     if not bool(ordered_statement._order_by_clauses):
-        logger.warn(
+        logger.warning(
             f"Pagination statement for {public_model} without an ORDER BY"
             " clause in the query. This works, but may yield inconsistent"
             " results."
