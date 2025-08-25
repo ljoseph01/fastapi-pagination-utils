@@ -12,8 +12,8 @@ from .schemas import PaginatedResults
 logger = logging.getLogger(__name__)
 
 
-
 class PaginationDetails(NamedTuple):
+    """Details to be returned alongside paginated data."""
     num_pages: int
     has_next: bool
     has_prev: bool
