@@ -1,5 +1,4 @@
 from pydantic import BaseModel, Field
-from sqlmodel import SQLModel
 
 
 class PaginationQuery(BaseModel):
@@ -17,7 +16,7 @@ class PaginationQuery(BaseModel):
     )
 
 
-class PaginatedResults[Model: SQLModel](BaseModel):
+class PaginatedResults[Model: BaseModel](BaseModel):
     """Schema for results returned by a paginated endpoint."""
 
     page: int

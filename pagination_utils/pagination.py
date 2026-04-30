@@ -1,13 +1,16 @@
-from typing import Annotated, Any, NamedTuple
+import logging
+import traceback
+from collections.abc import Callable
+from typing import Annotated, NamedTuple
 
-from fastapi import Query, HTTPException, status
+from fastapi import HTTPException, Query, status
+from pydantic import BaseModel
+from sqlalchemy import Row
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import SQLModel, func, select
+from sqlmodel import func, select
 from sqlmodel.sql.expression import SelectOfScalar
 
-import logging
 from .schemas import PaginatedResults
-
 
 logger = logging.getLogger(__name__)
 
@@ -63,33 +66,25 @@ def get_pagination_details(
     )
 
 
-async def paginate_query[Model: SQLModel, PublicModel: SQLModel](
-    base_statement: SelectOfScalar[Model],
+async def paginate_query[ResultT, SerialisedT: BaseModel](
+    base_statement: SelectOfScalar[ResultT],
     session: AsyncSession,
     page: int, page_size: int,
-    order_by: Any | None,
-    public_model: type[PublicModel]
-) -> PaginatedResults[PublicModel]:
+    serialiser_func: Callable[[Row[tuple[ResultT]]], SerialisedT]
+) -> PaginatedResults[SerialisedT]:
     count_statement = select(
         func.count(),
     ).select_from(base_statement.subquery())
     num_items = (await session.execute(count_statement)).scalar_one()
     details = get_pagination_details(num_items, page, page_size)
 
-    if order_by is None:
-        ordered_statement = base_statement
-    else:
-        ordered_statement = base_statement.order_by(order_by)
-
-    if not bool(ordered_statement._order_by_clauses):
+    if not bool(base_statement._order_by_clauses):
         logger.warning(
-            f"Pagination statement for {public_model} without an ORDER BY"
-            " clause in the query. This works, but may yield inconsistent"
-            " results."
+            f"Pagination request for {base_statement=} has no ORDER BY clause in the query.  This works, but may yield inconsistent results. Stack trace: {traceback.format_stack()}"  # noqa: E501
         )
 
     sized_statement = (
-        ordered_statement
+        base_statement
         .offset(details.offset)
         .limit(page_size)
     )
@@ -106,7 +101,7 @@ async def paginate_query[Model: SQLModel, PublicModel: SQLModel](
         has_next=details.has_next,
         has_prev=details.has_prev,
         data=[
-            public_model.model_validate(d)
-            for d in results.scalars()
+            serialiser_func(d)
+            for d in results.all()
         ]
     )
