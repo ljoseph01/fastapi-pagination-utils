@@ -1,24 +1,22 @@
+from unittest.mock import AsyncMock
+
 import pytest
 import pytest_asyncio
-import asyncio
-from typing import Optional
-from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
+from pagination_utils.pagination import (
+    PaginationDetails,
+    get_pagination_details,
+    paginate_query,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlmodel import SQLModel, Field, select, create_engine
 from sqlalchemy.pool import StaticPool
-import tempfile
-import os
-from contextlib import asynccontextmanager
-
-from pagination_utils.pagination import get_pagination_details, paginate_query, PaginationDetails
-from pagination_utils.schemas import PaginatedResults
+from sqlmodel import Field, SQLModel, select, col
 
 
 class User(SQLModel, table=True):
     __tablename__ = "test_users"
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     name: str
     age: int
     email: str
@@ -29,6 +27,16 @@ class UserPublic(SQLModel):
     name: str
     age: int
     email: str
+
+    @classmethod
+    def from_user(cls, user: User) -> "UserPublic":
+        assert user.id is not None
+        return cls(
+            id=user.id,
+            name=user.name,
+            age=user.age,
+            email=user.email
+        )
 
 
 # Test fixtures
@@ -92,8 +100,8 @@ class TestGetPaginationDetails:
         details = get_pagination_details(total_items=10, page=1, page_size=3)
 
         assert details.num_pages == 4
-        assert details.has_next == True
-        assert details.has_prev == False
+        assert details.has_next
+        assert not details.has_prev
         assert details.offset == 0
 
     def test_middle_page_with_items(self):
@@ -101,8 +109,8 @@ class TestGetPaginationDetails:
         details = get_pagination_details(total_items=10, page=2, page_size=3)
 
         assert details.num_pages == 4
-        assert details.has_next == True
-        assert details.has_prev == True
+        assert details.has_next
+        assert details.has_prev
         assert details.offset == 3
 
     def test_last_page_with_items(self):
@@ -110,8 +118,8 @@ class TestGetPaginationDetails:
         details = get_pagination_details(total_items=10, page=4, page_size=3)
 
         assert details.num_pages == 4
-        assert details.has_next == False
-        assert details.has_prev == True
+        assert not details.has_next
+        assert details.has_prev
         assert details.offset == 9
 
     def test_single_page(self):
@@ -119,8 +127,8 @@ class TestGetPaginationDetails:
         details = get_pagination_details(total_items=5, page=1, page_size=10)
 
         assert details.num_pages == 1
-        assert details.has_next == False
-        assert details.has_prev == False
+        assert not details.has_next
+        assert not details.has_prev
         assert details.offset == 0
 
     def test_empty_results(self):
@@ -130,8 +138,8 @@ class TestGetPaginationDetails:
         details = get_pagination_details(total_items=0, page=1, page_size=10)
 
         assert details.num_pages == 0
-        assert details.has_next == False
-        assert details.has_prev == False
+        assert not details.has_next
+        assert not details.has_prev
         assert details.offset == 0
 
     def test_exact_page_size_division(self):
@@ -139,8 +147,8 @@ class TestGetPaginationDetails:
         details = get_pagination_details(total_items=12, page=2, page_size=4)
 
         assert details.num_pages == 3
-        assert details.has_next == True
-        assert details.has_prev == True
+        assert details.has_next
+        assert details.has_prev
         assert details.offset == 4
 
     def test_page_not_found_error(self):
@@ -180,23 +188,22 @@ class TestPaginateQuery:
     @pytest.mark.asyncio
     async def test_first_page_pagination(self, populated_db):
         """Test pagination for first page"""
-        base_statement = select(User)
+        base_statement = select(User).order_by(User.id)
 
         result = await paginate_query(
             base_statement=base_statement,
             session=populated_db,
             page=1,
             page_size=3,
-            order_by=User.id,
-            public_model=UserPublic
+            serialiser_func=lambda u: UserPublic.from_user(u[0])
         )
 
         assert result.page == 1
         assert result.page_size == 3
         assert result.total_items == 10
         assert result.num_pages == 4
-        assert result.has_next == True
-        assert result.has_prev == False
+        assert result.has_next
+        assert not result.has_prev
         assert len(result.data) == 3
         assert result.data[0].name == "Alice"
         assert result.data[1].name == "Bob"
@@ -205,61 +212,58 @@ class TestPaginateQuery:
     @pytest.mark.asyncio
     async def test_middle_page_pagination(self, populated_db):
         """Test pagination for middle page"""
-        base_statement = select(User)
+        base_statement = select(User).order_by(User.id)
 
         result = await paginate_query(
             base_statement=base_statement,
             session=populated_db,
             page=2,
             page_size=3,
-            order_by=User.id,
-            public_model=UserPublic
+            serialiser_func=lambda u: UserPublic.from_user(u[0])
         )
 
         assert result.page == 2
         assert result.page_size == 3
         assert result.total_items == 10
         assert result.num_pages == 4
-        assert result.has_next == True
-        assert result.has_prev == True
+        assert result.has_next
+        assert result.has_prev
         assert len(result.data) == 3
         assert result.data[0].name == "Diana"
 
     @pytest.mark.asyncio
     async def test_last_page_pagination(self, populated_db):
         """Test pagination for last page"""
-        base_statement = select(User)
+        base_statement = select(User).order_by(User.id)
 
         result = await paginate_query(
             base_statement=base_statement,
             session=populated_db,
             page=4,
             page_size=3,
-            order_by=User.id,
-            public_model=UserPublic
+            serialiser_func=lambda u: UserPublic.from_user(u[0])
         )
 
         assert result.page == 4
         assert result.page_size == 3
         assert result.total_items == 10
         assert result.num_pages == 4
-        assert result.has_next == False
-        assert result.has_prev == True
+        assert not result.has_next
+        assert result.has_prev
         assert len(result.data) == 1  # Only 1 item on last page
         assert result.data[0].name == "Jack"
 
     @pytest.mark.asyncio
     async def test_pagination_with_filtering(self, populated_db):
         """Test pagination with WHERE clause filtering"""
-        base_statement = select(User).where(User.age >= 30)
+        base_statement = select(User).where(User.age >= 30).order_by(User.age)
 
         result = await paginate_query(
             base_statement=base_statement,
             session=populated_db,
             page=1,
             page_size=3,
-            order_by=User.age,
-            public_model=UserPublic
+            serialiser_func=lambda u: UserPublic.from_user(u[0])
         )
 
         assert result.total_items == 5  # Users with age >= 30
@@ -273,15 +277,14 @@ class TestPaginateQuery:
     @pytest.mark.asyncio
     async def test_pagination_with_custom_order_by(self, populated_db):
         """Test pagination with custom ordering"""
-        base_statement = select(User)
+        base_statement = select(User).order_by(col(User.age).desc())
 
         result = await paginate_query(
             base_statement=base_statement,
             session=populated_db,
             page=1,
             page_size=3,
-            order_by=User.age.desc(),
-            public_model=UserPublic
+            serialiser_func=lambda u: UserPublic.from_user(u[0])
         )
 
         assert len(result.data) == 3
@@ -301,39 +304,36 @@ class TestPaginateQuery:
                 session=populated_db,
                 page=1,
                 page_size=3,
-                order_by=None,
-                public_model=UserPublic
+                serialiser_func=lambda u: UserPublic.from_user(u[0])
             )
 
         # Check that warning was logged
-        assert "without an ORDER BY clause" in caplog.text
-        assert "UserPublic" in caplog.text
+        assert "has no ORDER BY" in caplog.text
         assert result.total_items == 10
 
     @pytest.mark.asyncio
     async def test_pagination_empty_results(self, populated_db):
         """Test pagination with no matching results"""
-        base_statement = select(User).where(User.age > 100)
+        base_statement = select(User).where(User.age > 100).order_by(User.id)
 
         result = await paginate_query(
             base_statement=base_statement,
             session=populated_db,
             page=1,
             page_size=3,
-            order_by=User.id,
-            public_model=UserPublic
+            serialiser_func=lambda u: UserPublic.from_user(u[0])
         )
 
         assert result.total_items == 0
         assert result.num_pages == 0
-        assert result.has_next == False
-        assert result.has_prev == False
+        assert not result.has_next
+        assert not result.has_prev
         assert len(result.data) == 0
 
     @pytest.mark.asyncio
     async def test_pagination_page_not_found(self, populated_db):
         """Test HTTPException when requesting non-existent page"""
-        base_statement = select(User)
+        base_statement = select(User).order_by(User.id)
 
         with pytest.raises(HTTPException) as exc_info:
             await paginate_query(
@@ -341,8 +341,7 @@ class TestPaginateQuery:
                 session=populated_db,
                 page=10,  # Way beyond available pages
                 page_size=3,
-                order_by=User.id,
-                public_model=UserPublic
+                serialiser_func=lambda u: UserPublic.from_user(u[0])
             )
 
         assert exc_info.value.status_code == 404
@@ -350,44 +349,23 @@ class TestPaginateQuery:
     @pytest.mark.asyncio
     async def test_pagination_large_page_size(self, populated_db):
         """Test pagination with page size larger than total items"""
-        base_statement = select(User)
+        base_statement = select(User).order_by(User.id)
 
         result = await paginate_query(
             base_statement=base_statement,
             session=populated_db,
             page=1,
             page_size=20,
-            order_by=User.id,
-            public_model=UserPublic
+            serialiser_func=lambda u: UserPublic.from_user(u[0])
         )
 
         assert result.page == 1
         assert result.page_size == 20
         assert result.total_items == 10
         assert result.num_pages == 1
-        assert result.has_next == False
-        assert result.has_prev == False
+        assert not result.has_next
+        assert not result.has_prev
         assert len(result.data) == 10  # All items on one page
-
-    @pytest.mark.asyncio
-    async def test_pagination_maintains_existing_order_by(self, populated_db):
-        """Test that existing order_by in base statement is preserved when order_by is None"""
-        base_statement = select(User).order_by(User.name)
-
-        result = await paginate_query(
-            base_statement=base_statement,
-            session=populated_db,
-            page=1,
-            page_size=3,
-            order_by=None,
-            public_model=UserPublic
-        )
-
-        assert len(result.data) == 3
-        # Should be ordered alphabetically by name
-        assert result.data[0].name == "Alice"
-        assert result.data[1].name == "Bob"
-        assert result.data[2].name == "Charlie"
 
 
 class TestPaginationDetailsNamedTuple:
@@ -403,15 +381,15 @@ class TestPaginationDetailsNamedTuple:
         )
 
         assert details.num_pages == 5
-        assert details.has_next == True
-        assert details.has_prev == False
+        assert details.has_next
+        assert not details.has_prev
         assert details.offset == 0
 
         # Test tuple unpacking
         num_pages, has_next, has_prev, offset = details
         assert num_pages == 5
-        assert has_next == True
-        assert has_prev == False
+        assert has_next
+        assert not has_prev
         assert offset == 0
 
 
@@ -425,7 +403,7 @@ class TestEdgeCases:
         mock_session = AsyncMock()
         mock_session.execute.side_effect = Exception("Database connection failed")
 
-        base_statement = select(User)
+        base_statement = select(User).order_by(User.id)
 
         with pytest.raises(Exception) as exc_info:
             await paginate_query(
@@ -433,8 +411,7 @@ class TestEdgeCases:
                 session=mock_session,
                 page=1,
                 page_size=3,
-                order_by=User.id,
-                public_model=UserPublic
+                serialiser_func=lambda u: UserPublic.from_user(u[0])
             )
 
         assert "Database connection failed" in str(exc_info.value)
@@ -452,7 +429,7 @@ class TestPaginationIntegration:
     @pytest.mark.asyncio
     async def test_full_pagination_workflow(self, populated_db):
         """Test complete pagination workflow through multiple pages"""
-        base_statement = select(User)
+        base_statement = select(User).order_by(User.id)
         all_users = []
         page = 1
 
@@ -463,8 +440,7 @@ class TestPaginationIntegration:
                     session=populated_db,
                     page=page,
                     page_size=3,
-                    order_by=User.id,
-                    public_model=UserPublic
+                    serialiser_func=lambda u: UserPublic.from_user(u[0])
                 )
                 all_users.extend(result.data)
 
