@@ -1,11 +1,11 @@
 import logging
 import traceback
 from collections.abc import Callable
-from typing import Annotated, NamedTuple
+from typing import Annotated, NamedTuple, Any
 
 from fastapi import HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import Row
+from sqlalchemy import Row, Select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import func, select
 from sqlmodel.sql.expression import SelectOfScalar
@@ -66,11 +66,11 @@ def get_pagination_details(
     )
 
 
-async def paginate_query[ResultT, SerialisedT: BaseModel](
-    base_statement: SelectOfScalar[ResultT],
+async def paginate_query[RowT: tuple[Any, ...], SerialisedT: BaseModel](
+    base_statement: Select[RowT],
     session: AsyncSession,
     page: int, page_size: int,
-    serialiser_func: Callable[[Row[tuple[ResultT]]], SerialisedT]
+    serialiser_func: Callable[[RowT], SerialisedT]
 ) -> PaginatedResults[SerialisedT]:
     count_statement = select(
         func.count(),
@@ -101,7 +101,7 @@ async def paginate_query[ResultT, SerialisedT: BaseModel](
         has_next=details.has_next,
         has_prev=details.has_prev,
         data=[
-            serialiser_func(d)
+            serialiser_func(d._tuple())
             for d in results.all()
         ]
     )
